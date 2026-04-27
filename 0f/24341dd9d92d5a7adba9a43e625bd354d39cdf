@@ -1,0 +1,32 @@
+huggingface/deploy.sh
+  f341c43f4879a57d 1-63
+webapp/app.py
+  f341c43f4879a57d 103,226-227,240-248,251,257-261,275,290,297,312-313,434-447
+webapp/static/style.css
+  f341c43f4879a57d 140,143-172
+webapp/templates/index.html
+  f341c43f4879a57d 35,40-43
+webapp/static/script.js
+  f341c43f4879a57d 31,36,62,65-71,76,153,210-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "0f24341dd9d92d5a7adba9a43e625bd354d39cdf",
+  "prompts": {
+    "f341c43f4879a57d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2884b712-0b23-4281-b4e7-0d567e14f519",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "jjbiernacki",
+      "messages": [],
+      "total_additions": 90,
+      "total_deletions": 5,
+      "accepted_lines": 153,
+      "overriden_lines": 0,
+      "messages_url": "https://gitai.miquido.dev/cas/2f271d2cb3b5a1e2da60e37112c2a312cd52be6e19d43173b3d90e6341420a7e"
+    }
+  }
+}
