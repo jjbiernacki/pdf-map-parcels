@@ -1,0 +1,24 @@
+webapp/static/script.js
+  f341c43f4879a57d 79,233
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "86133d2feeb76347d1797fa7ee6071884a99baf0",
+  "prompts": {
+    "f341c43f4879a57d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2884b712-0b23-4281-b4e7-0d567e14f519",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "jjbiernacki",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0,
+      "messages_url": "https://gitai.miquido.dev/cas/85d1c3c6308cadd15f7431d2ebaa4b0d958a2166cfe30f3b4be432b4ede03cdc"
+    }
+  }
+}
