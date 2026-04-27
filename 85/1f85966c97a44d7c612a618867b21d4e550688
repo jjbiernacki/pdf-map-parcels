@@ -1,0 +1,118 @@
+webapp/Procfile
+  f341c43f4879a57d 1
+analyze_graph.py
+  f341c43f4879a57d 1-267
+render_map.py
+  f341c43f4879a57d 1-71
+LICENSE
+  f341c43f4879a57d 1-21
+debug_stefczyka.py
+  f341c43f4879a57d 1-42
+targeted_ocr.py
+  f341c43f4879a57d 1-46
+webapp/static/script.js
+  f341c43f4879a57d 1-248
+huggingface/README.md
+  f341c43f4879a57d 1-27
+webapp/app.py
+  f341c43f4879a57d 1-366
+debug_teligi.py
+  f341c43f4879a57d 1-38
+.gitignore
+  f341c43f4879a57d 1-29
+debug_laurowa.py
+  f341c43f4879a57d 1-42
+debug_new_maps.py
+  f341c43f4879a57d 1-75
+analyze_raster.py
+  f341c43f4879a57d 1-360
+render_fabryczna.py
+  f341c43f4879a57d 1-70
+requirements.txt
+  f341c43f4879a57d 1-10
+tests/test_maps.py
+  f341c43f4879a57d 1-131
+analyze_cv.py
+  f341c43f4879a57d 1-1113
+debug_fabryczna.py
+  f341c43f4879a57d 1-118
+webapp/Dockerfile
+  f341c43f4879a57d 1-32
+render_grochowska_429_569.py
+  f341c43f4879a57d 1-62
+webapp/.dockerignore
+  f341c43f4879a57d 1-10
+webapp/README.md
+  f341c43f4879a57d 1-87
+debug_kurka_polys.py
+  f341c43f4879a57d 1-67
+tests/test_pipeline.py
+  f341c43f4879a57d 1-291
+huggingface/DEPLOY.md
+  f341c43f4879a57d 1-82
+explore_cv.py
+  f341c43f4879a57d 1-70
+webapp/requirements.txt
+  f341c43f4879a57d 1-10
+README.md
+  f341c43f4879a57d 1-134
+debug_laurowa2.py
+  f341c43f4879a57d 1-63
+analyze_ray.py
+  f341c43f4879a57d 1-223
+"Mapy/Działki na mapach.txt"
+  f341c43f4879a57d 1-52
+webapp/runtime.txt
+  f341c43f4879a57d 1
+debug_agatowa.py
+  f341c43f4879a57d 1-51
+webapp/static/style.css
+  f341c43f4879a57d 1-365
+analyze_hybrid.py
+  f341c43f4879a57d 1-1580
+webapp/templates/index.html
+  f341c43f4879a57d 1-101
+PROBY.md
+  f341c43f4879a57d 1-347
+webapp/render.yaml
+  f341c43f4879a57d 1-15
+"numery działek.txt"
+  f341c43f4879a57d 1-15
+run_all_maps.py
+  f341c43f4879a57d 1-368
+huggingface/.gitattributes
+  f341c43f4879a57d 1-2
+debug_colors.py
+  f341c43f4879a57d 1-23
+analyze.py
+  f341c43f4879a57d 1-552
+huggingface/Dockerfile
+  f341c43f4879a57d 1-39
+compare_gt.py
+  f341c43f4879a57d 1-36
+debug_kurka2.py
+  f341c43f4879a57d 1-86
+CEL.md
+  f341c43f4879a57d 1-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "851f85966c97a44d7c612a618867b21d4e550688",
+  "prompts": {
+    "f341c43f4879a57d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2884b712-0b23-4281-b4e7-0d567e14f519",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "jjbiernacki",
+      "messages": [],
+      "total_additions": 7918,
+      "total_deletions": 0,
+      "accepted_lines": 7918,
+      "overriden_lines": 0,
+      "messages_url": "https://gitai.miquido.dev/cas/cf78afe87e2662fb9655782ec11323b68f53499623c50a64b61f6f3c5652c18c"
+    }
+  }
+}
