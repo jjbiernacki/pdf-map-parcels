@@ -27,3 +27,7 @@ debug_*.png
 
 # --- webapp uploads / generated PNGs ---
 webapp/uploads/
+
+# --- benchmark output ---
+/tmp/bench.log
+/tmp/mapy_ocr_variants/

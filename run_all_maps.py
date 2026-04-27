@@ -51,7 +51,9 @@ def parse_gt(path: Path) -> dict[str, set[str]]:
     return result
 
 
-def _easyocr_read(proc, reader, chunk_w=4000, overlap=400):
+def _easyocr_read(proc, reader, chunk_w=4000, overlap=400, *,
+                  enable_pass2: bool = True,
+                  pass_timings: dict | None = None):
     """OCR Multi-pass: kombinacja chunk-size i progów żeby znaleźć etykiety
     których EasyOCR mógłby przegapić w pojedynczym podejściu.
 
@@ -86,9 +88,18 @@ def _easyocr_read(proc, reader, chunk_w=4000, overlap=400):
             xs += chunk_w_ - overlap_
         return raw_
 
-    raw = _pass(chunk_w, overlap, 0.3, 0.2)
-    raw2 = _pass(2500, 600, 0.2, 0.1)
-    raw3 = _pass(1500, 400, 0.15, 0.08)
+    def _timed(label, fn):
+        t0 = time.time()
+        out = fn()
+        dur = time.time() - t0
+        if pass_timings is not None:
+            pass_timings[label] = pass_timings.get(label, 0.0) + dur
+        return out
+
+    raw = _timed("pass1", lambda: _pass(chunk_w, overlap, 0.3, 0.2))
+    raw2 = _timed("pass2", lambda: _pass(2500, 600, 0.2, 0.1)) \
+        if enable_pass2 else []
+    raw3 = _timed("pass3", lambda: _pass(1500, 400, 0.15, 0.08))
 
     def _center(b):
         xs_ = [p[0] for p in b]; ys_ = [p[1] for p in b]
@@ -182,42 +193,73 @@ def _tesseract_read(proc, chunk_w=4000, overlap=400):
 
 
 def build_ocr_cache(pdf_path: Path, cache_path: Path, ocr_scale: int = 8,
-                    use_easyocr: bool = True, use_tesseract: bool = False) -> None:
+                    use_easyocr: bool = True, use_tesseract: bool = False,
+                    *,
+                    enable_pass2: bool = True,
+                    enable_high_scale: bool = True,
+                    high_scale_min_page_pt: float = 0.0,
+                    timings_out: dict | None = None) -> None:
     """Uruchamia EasyOCR multi-pass i opcjonalnie Tesseract, scala wyniki
     i zapisuje jako pickle.
 
-    Scalanie: wyniki są deduplikowane po pozycji (promień 30px). W przypadku
-    duplikatu wybieramy ten o WYŻSZYM CONF. Gdy easyocr zwraca artefakt typu
-    "7260" (nie pasuje do regex parcel-label) a tesseract zwraca "260" w tej
-    pozycji, wygrywa "260".
+    Flagi optymalizacyjne:
+      enable_pass2 — czy włączyć pass 2 (chunk 2500, threshold 0.2). Wyłączenie
+        oszczędza ~25-30% czasu OCR ale może gubić etykiety przy brzegach
+        chunków pass 1 i pass 3.
+      enable_high_scale — czy uruchomić dodatkowy re-render strony przy
+        scale=12 i kolejny EasyOCR. Ten pass istnieje głównie dla niskiego
+        kontrastu / etykiet blisko trasy (np. Grochowska 421). Wyłączenie
+        oszczędza dużo czasu zwłaszcza na dużych mapach (scale=12 to ~2.25×
+        więcej pikseli vs scale=8).
+      high_scale_min_page_pt — high-scale uruchamiany tylko gdy max(W, H)
+        strony ≥ ten próg w punktach PDF. 0 = zawsze gdy enable=True.
+
+    timings_out — opcjonalny dict, do którego wpisujemy ms każdego passu.
     """
     from analyze import _render_green_for_ocr
     import re
     doc = fitz.open(str(pdf_path))
     page = doc[0]
+    page_extent_pt = max(page.rect.width, page.rect.height)
+    pass_timings: dict = {} if timings_out is not None else {}
+
+    t_render = time.time()
     proc = _render_green_for_ocr(page, ocr_scale)
+    pass_timings["render_low"] = time.time() - t_render
 
     raw = []
     if use_easyocr:
         import easyocr
+        t_load = time.time()
         reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-        raw.extend(_easyocr_read(proc, reader))
-        # Dodatkowy pass przy WYŻSZEJ rozdzielczości (scale=12) dla regionów
-        # gdzie etykiety są blisko trasy lub mają niski kontrast — np.
-        # Grochowska 421 (czerwona linia tuż obok zielonej etykiety, EasyOCR
-        # przy scale=8 z text_threshold=0.15 nie znajduje, przy scale=12 +
-        # threshold=0.05 znajduje).
-        # Bbox-y skalujemy z powrotem do scale=ocr_scale przy zapisie do cache.
-        high_scale = 12
-        proc_high = _render_green_for_ocr(page, high_scale)
-        scale_ratio = ocr_scale / high_scale  # 8/12 = 0.667
-        high_raw = _easyocr_read_low_threshold(proc_high, reader)
-        for r in high_raw:
-            r["bbox"] = [(p[0] * scale_ratio, p[1] * scale_ratio)
-                         for p in r["bbox"]]
-            raw.append(r)
+        pass_timings["easyocr_load"] = time.time() - t_load
+
+        raw.extend(_easyocr_read(proc, reader,
+                                 enable_pass2=enable_pass2,
+                                 pass_timings=pass_timings))
+
+        # High-scale pass — opcjonalny. Renderujemy stronę przy scale=12,
+        # uruchamiamy ostatni EasyOCR pass z bardzo niskim progiem, bbox-y
+        # skalujemy z powrotem do współrzędnych ocr_scale.
+        do_high = enable_high_scale and page_extent_pt >= high_scale_min_page_pt
+        if do_high:
+            high_scale = 12
+            t_render2 = time.time()
+            proc_high = _render_green_for_ocr(page, high_scale)
+            pass_timings["render_high"] = time.time() - t_render2
+            t_high = time.time()
+            scale_ratio = ocr_scale / high_scale
+            high_raw = _easyocr_read_low_threshold(proc_high, reader)
+            pass_timings["pass_high"] = time.time() - t_high
+            for r in high_raw:
+                r["bbox"] = [(p[0] * scale_ratio, p[1] * scale_ratio)
+                             for p in r["bbox"]]
+                raw.append(r)
     if use_tesseract:
         raw.extend(_tesseract_read(proc))
+
+    if timings_out is not None:
+        timings_out.update(pass_timings)
 
     def bbox_center(b):
         xs_ = [p[0] for p in b]

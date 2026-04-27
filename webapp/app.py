@@ -14,6 +14,7 @@ Deploy: patrz webapp/README.md (Hugging Face Spaces / Render / Fly.io).
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -21,6 +22,7 @@ import math
 import os
 import queue
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -106,6 +108,18 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
+
+
+def _sha256_file(path: Path, chunk_size: int = 1 << 20) -> str:
+    """Hash pliku w blokach 1 MB — uniknij ładowania całego PDFa do RAM."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()[:24]  # 96 bitów wystarczy w nazwie pliku
 
 
 def _gc_jobs() -> None:
@@ -251,31 +265,41 @@ def _run_pipeline(job: Job) -> None:
         _check_cancel(job)
         push_step(job, "upload", complete=True)
 
-        # 1. OCR — najdłuższy etap, ticker płynnie podnosi % w tle.
-        # Pierwszy strzał na świeżym workerze: ~120-150s (model load).
-        # Kolejne: ~30-60s. Dajemy 100s jako średnią — krzywa exp i tak nie
-        # dobije do 100% (cap 95% allocacji). OCR jest jednym blokującym
-        # callem do EasyOCR — nie da się go bezpiecznie przerwać z
-        # zewnątrz, więc po cancel czekamy aż się skończy i WYCHODZIMY
-        # przed analyze/render. (W praktyce z perspektywy usera UI już
-        # zamknięte; CPU dopali się w tle ≤ minuta.)
+        # 1. OCR — najdłuższy etap. Cache po SHA-256 PDFa: dwukrotny upload
+        # tego samego pliku oddaje wynik w ~ms zamiast minut.
         push_step(job, "ocr", detail="Czytam numery działek z mapy…",
                   emit_progress=False)
         ocr_dir = Path(tempfile.gettempdir()) / "mapy_ocr_web"
         ocr_dir.mkdir(parents=True, exist_ok=True)
-        ocr_cache = ocr_dir / f"{job.id}.pkl"
-        t0 = time.time()
-        ticker_stop, ticker_th = _start_smooth_ticker(
-            job, "ocr", expected_seconds=100.0)
-        try:
-            run_all_maps.build_ocr_cache(job.pdf_path, ocr_cache)
-        finally:
-            ticker_stop.set()
-            ticker_th.join(timeout=2)
-        _check_cancel(job)
-        ocr_secs = time.time() - t0
-        push_step(job, "ocr", complete=True,
-                  detail=f"Rozpoznano numery ({ocr_secs:.0f} s)")
+        pdf_hash = _sha256_file(job.pdf_path)
+        ocr_cache = ocr_dir / f"sha256-{pdf_hash}.pkl"
+
+        if ocr_cache.exists():
+            # CACHE HIT — pomijamy OCR. Pasek przeskakuje płynnie do końca
+            # OCR-allokacji w 0.5s.
+            for pct in (8, 25, 50, 76):
+                push_event(job, "progress", percent=pct)
+                time.sleep(0.12)
+            push_step(job, "ocr", complete=True,
+                      detail="Wynik pobrany z cache (zero OCR).")
+        else:
+            # Pierwszy raz: pełny OCR z tickerem na pasku. Pierwszy strzał
+            # na świeżym workerze: ~60-120s (model load). Kolejne: ~30-60s.
+            # OCR jest jednym blokującym callem do EasyOCR — nie da się go
+            # bezpiecznie przerwać z zewnątrz, więc po cancel czekamy aż
+            # się skończy i WYCHODZIMY przed analyze/render.
+            t0 = time.time()
+            ticker_stop, ticker_th = _start_smooth_ticker(
+                job, "ocr", expected_seconds=80.0)
+            try:
+                run_all_maps.build_ocr_cache(job.pdf_path, ocr_cache)
+            finally:
+                ticker_stop.set()
+                ticker_th.join(timeout=2)
+            _check_cancel(job)
+            ocr_secs = time.time() - t0
+            push_step(job, "ocr", complete=True,
+                      detail=f"Rozpoznano numery ({ocr_secs:.0f} s)")
 
         # 2. analyze() — handler mapuje log na "analyze" / "classify"
         log = logging.getLogger("analyze_hybrid")
