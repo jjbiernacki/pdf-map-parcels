@@ -32,11 +32,15 @@
     <!-- KROK 2: progres -->
     <section id="progress-card" class="card hidden">
       <div class="progress-head">
-        <div>
+        <div class="progress-meta">
           <p class="filename" id="filename"></p>
           <p class="muted" id="elapsed">0 s</p>
         </div>
         <div class="percent" id="percent">0%</div>
+        <button type="button" id="stop-btn" class="stop-btn" aria-label="Zatrzymaj analizę">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+          Zatrzymaj
+        </button>
       </div>
       <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
       <ol class="steps" id="steps"></ol>

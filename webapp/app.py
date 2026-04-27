@@ -100,6 +100,7 @@ class Job:
     events: queue.Queue = field(default_factory=queue.Queue)
     done: bool = False
     error: str | None = None
+    cancelled: threading.Event = field(default_factory=threading.Event)
     result: dict | None = None  # {crossed: [...], borderline: [...], image_path: ...}
 
 
@@ -222,6 +223,8 @@ def _start_smooth_ticker(job: Job, step_key: str, *, expected_seconds: float):
 
     def loop():
         while not stop.is_set():
+            if job.cancelled.is_set():
+                return
             elapsed = time.time() - t0
             frac = 1.0 - math.exp(-elapsed / tau)
             pct = pct_start + (pct_cap - pct_start) * frac
@@ -234,14 +237,28 @@ def _start_smooth_ticker(job: Job, step_key: str, *, expected_seconds: float):
     return stop, th
 
 
+class _Cancelled(Exception):
+    """Sygnał wyjścia z pipeline po klepnięciu Stop przez usera."""
+
+
+def _check_cancel(job: Job) -> None:
+    if job.cancelled.is_set():
+        raise _Cancelled
+
+
 def _run_pipeline(job: Job) -> None:
     try:
+        _check_cancel(job)
         push_step(job, "upload", complete=True)
 
         # 1. OCR — najdłuższy etap, ticker płynnie podnosi % w tle.
         # Pierwszy strzał na świeżym workerze: ~120-150s (model load).
         # Kolejne: ~30-60s. Dajemy 100s jako średnią — krzywa exp i tak nie
-        # dobije do 100% (cap 95% allocacji).
+        # dobije do 100% (cap 95% allocacji). OCR jest jednym blokującym
+        # callem do EasyOCR — nie da się go bezpiecznie przerwać z
+        # zewnątrz, więc po cancel czekamy aż się skończy i WYCHODZIMY
+        # przed analyze/render. (W praktyce z perspektywy usera UI już
+        # zamknięte; CPU dopali się w tle ≤ minuta.)
         push_step(job, "ocr", detail="Czytam numery działek z mapy…",
                   emit_progress=False)
         ocr_dir = Path(tempfile.gettempdir()) / "mapy_ocr_web"
@@ -255,6 +272,7 @@ def _run_pipeline(job: Job) -> None:
         finally:
             ticker_stop.set()
             ticker_th.join(timeout=2)
+        _check_cancel(job)
         ocr_secs = time.time() - t0
         push_step(job, "ocr", complete=True,
                   detail=f"Rozpoznano numery ({ocr_secs:.0f} s)")
@@ -269,12 +287,14 @@ def _run_pipeline(job: Job) -> None:
             result = analyze_hybrid.analyze(str(job.pdf_path), ocr_cache=str(ocr_cache))
         finally:
             log.removeHandler(handler)
+        _check_cancel(job)
         # po zakończeniu analyze: classify jest ostatnim aktywowanym etapem,
         # zamykamy go (handler aktywuje go ale nie zamyka)
         push_step(job, "classify", complete=True,
                   detail=f"Znaleziono {len(result.crossed)} dz.")
 
         # 3. render PNG
+        _check_cancel(job)
         push_step(job, "render", detail="Rysuję mapę…")
         png_path = job.pdf_path.parent / f"{job.id}.png"
         render_result_png(job.pdf_path, ocr_cache, set(result.crossed),
@@ -289,6 +309,8 @@ def _run_pipeline(job: Job) -> None:
         push_event(job, "done",
                    crossed=result.crossed, borderline=result.borderline,
                    image_url=job.result["image_url"])
+    except _Cancelled:
+        push_event(job, "cancelled")
     except Exception as e:
         job.error = f"{type(e).__name__}: {e}"
         traceback.print_exc()
@@ -407,6 +429,20 @@ def events(job_id):
     return Response(stream(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache",
                              "X-Accel-Buffering": "no"})
+
+
+@app.route("/cancel/<job_id>", methods=["POST"])
+def cancel_job(job_id):
+    """User klika Stop. Markujemy job jako anulowany — pipeline wyjdzie
+    przy najbliższym checkpoint'cie. OCR (jeden blokujący call) dokończy się
+    w tle, ale nic z tego nie wynika dla użytkownika."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if job is None:
+        return jsonify({"error": "unknown job"}), 404
+    if not job.done:
+        job.cancelled.set()
+    return jsonify({"ok": True})
 
 
 @app.route("/result/<job_id>/image")

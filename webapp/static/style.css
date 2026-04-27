@@ -137,9 +137,39 @@ footer {
 .progress-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   margin-bottom: 14px;
+}
+.progress-meta { flex: 1; min-width: 0; }
+.progress-meta .filename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: transparent;
+  color: #b42318;
+  border: 1px solid #fecdca;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease, transform .08s ease;
+}
+.stop-btn:hover {
+  background: #fef3f2;
+  border-color: #fda29b;
+}
+.stop-btn:active { transform: scale(.97); }
+.stop-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(180, 35, 24, .18);
+}
+@media (prefers-color-scheme: dark) {
+  .stop-btn { color: #fda29b; border-color: #5d2018; }
+  .stop-btn:hover { background: #2a0f0c; border-color: #b42318; }
 }
 .filename {
   margin: 0;

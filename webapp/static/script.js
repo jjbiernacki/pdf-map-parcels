@@ -28,10 +28,12 @@
   const lightboxClose = document.getElementById("lightbox-close");
   const resetBtn = document.getElementById("reset-btn");
   const errorReset = document.getElementById("error-reset");
+  const stopBtn = document.getElementById("stop-btn");
 
   let elapsedTimer = null;
   let startedAt = 0;
   let activeES = null;
+  let activeJobId = null;
   let stepEls = new Map();
 
   // ---- pick & drop ----
@@ -57,13 +59,21 @@
     if (f) submit(f);
   });
 
-  // ---- reset ----
+  // ---- reset / stop ----
   resetBtn.addEventListener("click", reset);
   errorReset.addEventListener("click", reset);
+  stopBtn.addEventListener("click", () => {
+    if (activeJobId) {
+      // fire-and-forget — backend ustawi flagę cancel; nie czekamy na response
+      fetch(`/cancel/${activeJobId}`, { method: "POST" }).catch(() => {});
+    }
+    reset();
+  });
 
   function reset() {
     if (activeES) { activeES.close(); activeES = null; }
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+    activeJobId = null;
     fileInput.value = "";
     uploadCard.classList.remove("hidden");
     progressCard.classList.add("hidden");
@@ -140,6 +150,7 @@
       return;
     }
     const { job_id } = await res.json();
+    activeJobId = job_id;
     streamEvents(job_id);
   }
 
@@ -196,6 +207,10 @@
       finishOk(ev);
     } else if (ev.type === "error") {
       showError(ev.message || "Nieznany błąd.");
+    } else if (ev.type === "cancelled") {
+      // user kliknął Stop — UI już zresetowane (reset() przed POST /cancel),
+      // event ignorujemy
+      return;
     } else if (ev.type === "close") {
       if (activeES) { activeES.close(); activeES = null; }
       stopTimer();
