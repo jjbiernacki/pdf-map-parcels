@@ -56,18 +56,25 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
 # --- progres pipeline'u --------------------------------------------------
-# Pięć kroków user-friendly w kolejności RZECZYWISTEGO wykonania.
-# Wagi proporcjonalne do realnego czasu (OCR dominuje, ~75% wallclock).
+# Kroki user-friendly w kolejności RZECZYWISTEGO wykonania. OCR rozbity
+# na 5 podkroków odpowiadających realnym przejściom EasyOCR — każdy ma
+# własny ticker, więc pasek nie stoi w miejscu przez minuty.
+# Wagi proporcjonalne do obserwowanych czasów (OCR ~75% wallclock).
 # Sumują się do 100.
 PIPELINE_STEPS = [
-    ("upload",   "Wczytuję plik",                  1),
-    ("ocr",      "Rozpoznaję numery działek",     75),
-    ("analyze",  "Analizuję rysunek mapy",        10),
-    ("classify", "Wyznaczam działki na trasie",    7),
-    ("render",   "Generuję podgląd mapy",          7),
+    ("upload",        "Wczytuję plik",                                1),
+    ("ocr_init",      "Przygotowuję rozpoznawanie tekstu",            3),
+    ("ocr_pass1",     "Wyłapuję wyraźne numery działek",             18),
+    ("ocr_pass2",     "Szukam numerów przy krawędziach mapy",        18),
+    ("ocr_pass3",     "Szukam słabo widocznych numerów",             18),
+    ("ocr_highscale", "Powiększam mapę i szukam najmniejszych numerów", 18),
+    ("analyze",       "Analizuję rysunek mapy",                       9),
+    ("classify",      "Wyznaczam działki na trasie",                  7),
+    ("render",        "Generuję podgląd mapy",                        8),
 ]
 STEP_BY_KEY = {k: (label, w) for k, label, w in PIPELINE_STEPS}
 STEP_ORDER = [k for k, _, _ in PIPELINE_STEPS]
+OCR_SUBSTEP_KEYS = ("ocr_init", "ocr_pass1", "ocr_pass2", "ocr_pass3", "ocr_highscale")
 
 
 # Mapowanie log z analyze_hybrid na user-friendly kroki.
@@ -108,6 +115,13 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
+
+
+def _format_duration(seconds: float) -> str:
+    """User-facing czas trwania: '~30 s', '~2 min', '~5 min'."""
+    if seconds < 60:
+        return f"~{int(round(seconds))} s"
+    return f"~{int(round(seconds / 60))} min"
 
 
 def _sha256_file(path: Path, chunk_size: int = 1 << 20) -> str:
@@ -214,25 +228,31 @@ def _compute_percent(job: Job, current_key: str, complete: bool) -> int:
 # ------------------------------------------------------------------------ #
 # pipeline w wątku
 # ------------------------------------------------------------------------ #
-def _start_smooth_ticker(job: Job, step_key: str, *, expected_seconds: float):
-    """Wątek-ticker który płynnie pcha pasek do PRZÓD przez czas trwania
-    blokującego kroku (np. OCR ~60-90s).
+def _step_pct_range(step_key: str) -> tuple[float, float]:
+    """Zwróć (pct_start, pct_end) dla danego kroku w globalnej skali 0-100."""
+    total = sum(w for _, _, w in PIPELINE_STEPS)
+    prior = sum(w for k, _, w in PIPELINE_STEPS
+                if STEP_ORDER.index(k) < STEP_ORDER.index(step_key))
+    weight = STEP_BY_KEY[step_key][1]
+    return prior / total * 100, (prior + weight) / total * 100
 
-    Krzywa: asymptotyczna (1 - exp(-t/tau)), gdzie tau dobrane tak, że po
-    `expected_seconds` jesteśmy na ~80% allocacji kroku. Cap 95% — ostatnie
-    5% domknie `complete=True` po realnym zakończeniu.
+
+def _start_smooth_ticker(job: Job, step_key: str, *, expected_seconds: float):
+    """Wątek-ticker który płynnie pcha pasek LINIOWO przez czas trwania
+    blokującego kroku.
+
+    Krzywa: liniowa od pct_start do 95% allocacji kroku przez
+    `expected_seconds`. Po przekroczeniu — plateau na 95%. Ostatnie 5%
+    domknie `push_step(complete=True)` gdy krok faktycznie skończy.
+
+    Liniowa krzywa (vs poprzednia exp): user widzi STAŁE tempo, więc po
+    25% wie że jest w 1/4 drogi. Dla niedoszacowanego czasu plateau na
+    95% jest lepsze niż "zatrzymanie się prawie na końcu".
     """
     stop = threading.Event()
-
-    label, weight = STEP_BY_KEY[step_key]
-    # zakres % przeznaczony na ten krok
-    total = sum(w for _, _, w in PIPELINE_STEPS)
-    prior = sum(w for k, _, w in PIPELINE_STEPS if STEP_ORDER.index(k) < STEP_ORDER.index(step_key))
-    pct_start = prior / total * 100
-    pct_end = (prior + weight) / total * 100
+    pct_start, pct_end = _step_pct_range(step_key)
     pct_cap = pct_start + (pct_end - pct_start) * 0.95
-
-    tau = max(8.0, expected_seconds * 0.55)  # stała czasowa krzywej
+    expected = max(0.5, expected_seconds)
     t0 = time.time()
 
     def loop():
@@ -240,15 +260,51 @@ def _start_smooth_ticker(job: Job, step_key: str, *, expected_seconds: float):
             if job.cancelled.is_set():
                 return
             elapsed = time.time() - t0
-            frac = 1.0 - math.exp(-elapsed / tau)
+            frac = min(1.0, elapsed / expected)
             pct = pct_start + (pct_cap - pct_start) * frac
             push_event(job, "progress", percent=int(round(pct)))
-            if stop.wait(1.5):
+            if stop.wait(1.0):
                 return
 
     th = threading.Thread(target=loop, daemon=True)
     th.start()
     return stop, th
+
+
+def _estimate_ocr_seconds(pdf_path: Path) -> dict[str, float]:
+    """Estymuj czas każdego sub-passa OCR na podstawie POLA STRONY w pt².
+
+    Page area to lepszy proxy niż rozmiar pliku — kompresja PDFa różnie
+    wpływa na byte size, ale OCR pracuje na zrasteryzowanym obrazie strony.
+
+    Współczynnik 250 ms/(1k pt²) pochodzi z bencha — zaobserwowane:
+      - 03 PZT (5.5M pt²): ~1320s OCR (5.5×240)
+      - Fabryczna (1.0M pt²): ~290s OCR (1.0×290)
+      - Kurka (0.96M pt²): ~150s OCR (0.96×156)
+
+    Nie idealny (różnice 30-50% przez gęstość etykiet), ale rzędu wielkości
+    trafia. Linear ticker plateau-uje przy 95% jeśli niedoszacujemy.
+    """
+    try:
+        import fitz
+        doc = fitz.open(str(pdf_path))
+        page = doc[0]
+        area_pt2 = max(1.0, page.rect.width * page.rect.height)
+        doc.close()
+    except Exception:
+        area_pt2 = 1_000_000.0
+    total = max(40.0, min(1800.0, area_pt2 / 1_000.0 * 0.25))
+    # rozkład: pass1/2/3 + highscale ≈ równe ćwiartki, init stała
+    init = max(5.0, total * 0.04)
+    rest = total - init
+    pass_each = rest * 0.25
+    return {
+        "ocr_init":      init,
+        "ocr_pass1":     pass_each,
+        "ocr_pass2":     pass_each,
+        "ocr_pass3":     pass_each,
+        "ocr_highscale": pass_each,
+    }
 
 
 class _Cancelled(Exception):
@@ -265,41 +321,65 @@ def _run_pipeline(job: Job) -> None:
         _check_cancel(job)
         push_step(job, "upload", complete=True)
 
-        # 1. OCR — najdłuższy etap. Cache po SHA-256 PDFa: dwukrotny upload
-        # tego samego pliku oddaje wynik w ~ms zamiast minut.
-        push_step(job, "ocr", detail="Czytam numery działek z mapy…",
-                  emit_progress=False)
+        # OCR — 5 podkroków + cache po SHA-256 PDFa.
         ocr_dir = Path(tempfile.gettempdir()) / "mapy_ocr_web"
         ocr_dir.mkdir(parents=True, exist_ok=True)
         pdf_hash = _sha256_file(job.pdf_path)
         ocr_cache = ocr_dir / f"sha256-{pdf_hash}.pkl"
 
+        # estymata czasu — pcha event dla frontendu jeszcze ZANIM zaczniemy
+        # OCR, żeby user od razu wiedział "to potrwa ~5 min".
         if ocr_cache.exists():
-            # CACHE HIT — pomijamy OCR. Pasek przeskakuje płynnie do końca
-            # OCR-allokacji w 0.5s.
-            for pct in (8, 25, 50, 76):
-                push_event(job, "progress", percent=pct)
-                time.sleep(0.12)
-            push_step(job, "ocr", complete=True,
-                      detail="Wynik pobrany z cache (zero OCR).")
+            push_event(job, "estimate", seconds=2,
+                       label="Mapa znana — wynik z cache")
         else:
-            # Pierwszy raz: pełny OCR z tickerem na pasku. Pierwszy strzał
-            # na świeżym workerze: ~60-120s (model load). Kolejne: ~30-60s.
-            # OCR jest jednym blokującym callem do EasyOCR — nie da się go
-            # bezpiecznie przerwać z zewnątrz, więc po cancel czekamy aż
-            # się skończy i WYCHODZIMY przed analyze/render.
-            t0 = time.time()
-            ticker_stop, ticker_th = _start_smooth_ticker(
-                job, "ocr", expected_seconds=80.0)
+            substep_secs = _estimate_ocr_seconds(job.pdf_path)
+            total_ocr_est = sum(substep_secs.values())
+            # +20s na analyze + render (mała stała)
+            total_est = total_ocr_est + 20
+            push_event(job, "estimate", seconds=int(round(total_est)),
+                       label=_format_duration(total_est))
+
+        if ocr_cache.exists():
+            # CACHE HIT — flash przez sub-steps
+            for sk in OCR_SUBSTEP_KEYS:
+                push_step(job, sk, complete=True, detail="z cache")
+                time.sleep(0.07)
+        else:
+            # CACHE MISS — odpalamy build_ocr_cache z callbackiem który
+            # przełącza sub-steps (każdy ze swoim tickerem).
+            current = {"key": None, "stop": None, "th": None}
+
+            def _switch_substep(key: str, label: str = "") -> None:
+                # zatrzymaj poprzedni ticker
+                if current["stop"] is not None:
+                    current["stop"].set()
+                    if current["th"] is not None:
+                        current["th"].join(timeout=1)
+                # zamknij poprzedni krok
+                if current["key"]:
+                    push_step(job, current["key"], complete=True)
+                # otwórz nowy + ticker
+                push_step(job, key, detail=label, emit_progress=False)
+                stop, th = _start_smooth_ticker(
+                    job, key,
+                    expected_seconds=substep_secs.get(key, 30.0))
+                current["key"], current["stop"], current["th"] = key, stop, th
+
             try:
-                run_all_maps.build_ocr_cache(job.pdf_path, ocr_cache)
+                run_all_maps.build_ocr_cache(
+                    job.pdf_path, ocr_cache,
+                    progress_callback=_switch_substep)
             finally:
-                ticker_stop.set()
-                ticker_th.join(timeout=2)
+                if current["stop"] is not None:
+                    current["stop"].set()
+                if current["th"] is not None:
+                    current["th"].join(timeout=2)
+
             _check_cancel(job)
-            ocr_secs = time.time() - t0
-            push_step(job, "ocr", complete=True,
-                      detail=f"Rozpoznano numery ({ocr_secs:.0f} s)")
+            # zamknij ostatni sub-step (zwykle ocr_highscale)
+            if current["key"]:
+                push_step(job, current["key"], complete=True)
 
         # 2. analyze() — handler mapuje log na "analyze" / "classify"
         log = logging.getLogger("analyze_hybrid")

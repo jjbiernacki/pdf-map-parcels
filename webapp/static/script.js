@@ -8,7 +8,8 @@
   const errorCard = document.getElementById("error-card");
   const errorMsg = document.getElementById("error-msg");
   const filenameEl = document.getElementById("filename");
-  const elapsedEl = document.getElementById("elapsed");
+  const elapsedEl = document.getElementById("elapsed-time");
+  const estimateSuffixEl = document.getElementById("estimate-suffix");
   const percentEl = document.getElementById("percent");
   const barFill = document.getElementById("bar-fill");
   const stepsList = document.getElementById("steps");
@@ -205,6 +206,8 @@
       percentEl.textContent = p + "%";
     } else if (ev.type === "done") {
       finishOk(ev);
+    } else if (ev.type === "estimate") {
+      if (ev.label) estimateSuffixEl.textContent = " · " + ev.label;
     } else if (ev.type === "error") {
       showError(ev.message || "Nieznany błąd.");
     } else if (ev.type === "cancelled") {
@@ -302,6 +305,7 @@
     startedAt = Date.now();
     if (elapsedTimer) clearInterval(elapsedTimer);
     elapsedEl.textContent = "0 s";
+    estimateSuffixEl.textContent = "";
     elapsedTimer = setInterval(() => {
       const s = Math.round((Date.now() - startedAt) / 1000);
       elapsedEl.textContent = s + " s";

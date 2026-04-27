@@ -53,7 +53,8 @@ def parse_gt(path: Path) -> dict[str, set[str]]:
 
 def _easyocr_read(proc, reader, chunk_w=4000, overlap=400, *,
                   enable_pass2: bool = True,
-                  pass_timings: dict | None = None):
+                  pass_timings: dict | None = None,
+                  progress_callback=None):
     """OCR Multi-pass: kombinacja chunk-size i progów żeby znaleźć etykiety
     których EasyOCR mógłby przegapić w pojedynczym podejściu.
 
@@ -96,9 +97,19 @@ def _easyocr_read(proc, reader, chunk_w=4000, overlap=400, *,
             pass_timings[label] = pass_timings.get(label, 0.0) + dur
         return out
 
+    if progress_callback:
+        progress_callback("ocr_pass1", "Wyłapuję wyraźne numery działek")
     raw = _timed("pass1", lambda: _pass(chunk_w, overlap, 0.3, 0.2))
-    raw2 = _timed("pass2", lambda: _pass(2500, 600, 0.2, 0.1)) \
-        if enable_pass2 else []
+
+    if enable_pass2:
+        if progress_callback:
+            progress_callback("ocr_pass2", "Szukam numerów przy krawędziach mapy")
+        raw2 = _timed("pass2", lambda: _pass(2500, 600, 0.2, 0.1))
+    else:
+        raw2 = []
+
+    if progress_callback:
+        progress_callback("ocr_pass3", "Szukam słabo widocznych numerów")
     raw3 = _timed("pass3", lambda: _pass(1500, 400, 0.15, 0.08))
 
     def _center(b):
@@ -198,7 +209,8 @@ def build_ocr_cache(pdf_path: Path, cache_path: Path, ocr_scale: int = 8,
                     enable_pass2: bool = True,
                     enable_high_scale: bool = True,
                     high_scale_min_page_pt: float = 0.0,
-                    timings_out: dict | None = None) -> None:
+                    timings_out: dict | None = None,
+                    progress_callback=None) -> None:
     """Uruchamia EasyOCR multi-pass i opcjonalnie Tesseract, scala wyniki
     i zapisuje jako pickle.
 
@@ -230,19 +242,25 @@ def build_ocr_cache(pdf_path: Path, cache_path: Path, ocr_scale: int = 8,
     raw = []
     if use_easyocr:
         import easyocr
+        if progress_callback:
+            progress_callback("ocr_init", "Przygotowuję rozpoznawanie tekstu")
         t_load = time.time()
         reader = easyocr.Reader(["en"], gpu=False, verbose=False)
         pass_timings["easyocr_load"] = time.time() - t_load
 
         raw.extend(_easyocr_read(proc, reader,
                                  enable_pass2=enable_pass2,
-                                 pass_timings=pass_timings))
+                                 pass_timings=pass_timings,
+                                 progress_callback=progress_callback))
 
         # High-scale pass — opcjonalny. Renderujemy stronę przy scale=12,
         # uruchamiamy ostatni EasyOCR pass z bardzo niskim progiem, bbox-y
         # skalujemy z powrotem do współrzędnych ocr_scale.
         do_high = enable_high_scale and page_extent_pt >= high_scale_min_page_pt
         if do_high:
+            if progress_callback:
+                progress_callback("ocr_highscale",
+                                  "Powiększam mapę i szukam najmniejszych numerów")
             high_scale = 12
             t_render2 = time.time()
             proc_high = _render_green_for_ocr(page, high_scale)
