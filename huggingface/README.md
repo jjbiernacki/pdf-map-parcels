@@ -7,7 +7,7 @@ sdk: docker
 app_port: 7860
 pinned: false
 license: mit
-short_description: Wgraj mapę PDF i zobacz numery działek przeciętych przez czerwoną trasę.
+short_description: Numery działek przeciętych przez trasę z mapy PDF.
 ---
 
 # Analiza mapy geodezyjnej
