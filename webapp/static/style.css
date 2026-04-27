@@ -318,12 +318,47 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* button reset */
+  appearance: none;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  width: 100%;
+  cursor: zoom-in;
+  transition: border-color .12s ease, box-shadow .12s ease;
 }
+.map-wrap:hover:not(:disabled) { border-color: var(--accent); }
+.map-wrap:disabled { cursor: default; opacity: 1; }
+.map-wrap:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.map-wrap:hover .map-zoom-hint { opacity: 1; transform: translateY(0); }
 #map-img {
   display: block;
   width: 100%;
   height: auto;
 }
+.map-zoom-hint {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, .82);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .15s ease, transform .15s ease;
+}
+.map-zoom-hint svg { stroke: currentColor; }
 .map-pending {
   display: flex;
   flex-direction: column;
@@ -352,6 +387,88 @@ textarea:focus {
 }
 .dot-pick { background: var(--pick); }
 .dot-bord { background: var(--bord); }
+
+/* ---- lightbox ---- */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(8, 12, 22, .92);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  animation: lightbox-fade .18s ease-out;
+}
+@keyframes lightbox-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.lightbox.hidden { display: none !important; }
+
+.lightbox-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .15);
+  background: rgba(255, 255, 255, .08);
+  color: #f8fafc;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: background .12s ease, transform .08s ease;
+}
+.lightbox-close:hover { background: rgba(255, 255, 255, .18); }
+.lightbox-close:active { transform: scale(.94); }
+.lightbox-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(91, 155, 255, .55);
+}
+
+.lightbox-stage {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 16px 48px;
+  -webkit-overflow-scrolling: touch;
+}
+#lightbox-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, .55);
+  cursor: zoom-in;
+  transition: max-width .25s ease;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+#lightbox-img.zoomed {
+  max-width: none;       /* native size — overflow forces scroll */
+  width: auto;
+  cursor: zoom-out;
+}
+.lightbox-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 100px;
+  background: rgba(255, 255, 255, .06);
+  color: rgba(255, 255, 255, .7);
+  font-size: 12px;
+  pointer-events: none;
+}
 
 /* ---- error ---- */
 .card.error {

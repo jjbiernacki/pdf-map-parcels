@@ -21,6 +21,11 @@
   const copyStatus = document.getElementById("copy-status");
   const mapImg = document.getElementById("map-img");
   const mapPending = document.getElementById("map-pending");
+  const mapWrap = document.getElementById("map-wrap");
+  const mapZoomHint = document.getElementById("map-zoom-hint");
+  const lightbox = document.getElementById("lightbox");
+  const lightboxImg = document.getElementById("lightbox-img");
+  const lightboxClose = document.getElementById("lightbox-close");
   const resetBtn = document.getElementById("reset-btn");
   const errorReset = document.getElementById("error-reset");
 
@@ -76,6 +81,9 @@
     mapImg.src = "";
     mapImg.classList.add("hidden");
     mapPending.classList.remove("hidden");
+    mapZoomHint.classList.add("hidden");
+    mapWrap.disabled = true;
+    closeLightbox();
     copyStatus.textContent = "";
     copyBtn.classList.remove("copied");
     copyBtn.firstChild && (copyBtn.lastChild.textContent = " Kopiuj");
@@ -215,13 +223,55 @@
       borderlineCount.textContent = String(borderline.length);
     }
     if (ev.image_url) {
-      mapImg.src = ev.image_url + "?t=" + Date.now();
+      const url = ev.image_url + "?t=" + Date.now();
+      mapImg.src = url;
       mapImg.onload = () => {
         mapPending.classList.add("hidden");
         mapImg.classList.remove("hidden");
+        mapZoomHint.classList.remove("hidden");
+        mapWrap.disabled = false;
+        // pre-load lightbox version (same image, browser caches)
+        lightboxImg.src = url;
       };
     }
   }
+
+  // ---- lightbox ----
+  function openLightbox() {
+    if (!mapImg.src || mapImg.classList.contains("hidden")) return;
+    if (!lightboxImg.src) lightboxImg.src = mapImg.src;
+    lightboxImg.classList.remove("zoomed");
+    lightbox.classList.remove("hidden");
+    document.body.style.overflow = "hidden";
+    // focus close button for keyboard users
+    setTimeout(() => lightboxClose.focus(), 0);
+  }
+  function closeLightbox() {
+    lightbox.classList.add("hidden");
+    document.body.style.overflow = "";
+  }
+  mapWrap.addEventListener("click", (e) => {
+    e.preventDefault();
+    openLightbox();
+  });
+  lightboxClose.addEventListener("click", closeLightbox);
+  // klik w tło (poza obrazem) zamyka
+  lightbox.addEventListener("click", (e) => {
+    if (e.target === lightbox || e.target.id === "lightbox-stage") {
+      closeLightbox();
+    }
+  });
+  // klik w obraz — toggle native-size zoom
+  lightboxImg.addEventListener("click", (e) => {
+    e.stopPropagation();
+    lightboxImg.classList.toggle("zoomed");
+  });
+  // ESC zamyka
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !lightbox.classList.contains("hidden")) {
+      closeLightbox();
+    }
+  });
 
   function showError(msg) {
     if (activeES) { activeES.close(); activeES = null; }
