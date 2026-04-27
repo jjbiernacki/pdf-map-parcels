@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -53,41 +54,40 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
 # --- progres pipeline'u --------------------------------------------------
-# Każdy krok ma znany udział w całości (sumują się do 100%).
-# Etykiety widoczne dla użytkownika.
+# Pięć kroków user-friendly w kolejności RZECZYWISTEGO wykonania.
+# Wagi proporcjonalne do realnego czasu (OCR dominuje, ~75% wallclock).
+# Sumują się do 100.
 PIPELINE_STEPS = [
-    ("upload",     "Wczytuję PDF",                     2),
-    ("paths",      "Wyciągam ścieżki wektorowe",       3),
-    ("ocr",        "OCR etykiet (EasyOCR — najdłuższy etap)", 60),
-    ("segments",   "Buduję segmenty zielonych granic", 4),
-    ("closures",   "Zamykam otwarte granice działek",  6),
-    ("polygonize", "Składam wielokąty działek",         5),
-    ("classify",   "Klasyfikuję działki przecięte trasą", 8),
-    ("match",      "Dopasowuję etykiety do działek",    5),
-    ("render",     "Renderuję mapę z zaznaczeniami",    7),
+    ("upload",   "Wczytuję plik",                  1),
+    ("ocr",      "Rozpoznaję numery działek",     75),
+    ("analyze",  "Analizuję rysunek mapy",        10),
+    ("classify", "Wyznaczam działki na trasie",    7),
+    ("render",   "Generuję podgląd mapy",          7),
 ]
 STEP_BY_KEY = {k: (label, w) for k, label, w in PIPELINE_STEPS}
+STEP_ORDER = [k for k, _, _ in PIPELINE_STEPS]
 
 
-# Mapowanie znanych komunikatów log z analyze_hybrid → klucz kroku.
-# Pattern matching jest celowo prosty.
+# Mapowanie log z analyze_hybrid na user-friendly kroki.
+# - "analyze"  = ścieżki wektorowe + segmenty zielonych + zamykanie luk + składanie wielokątów
+# - "classify" = klasyfikacja działek + dopasowanie etykiet (ostatnia faza analyze())
 LOG_TO_STEP = [
-    (re.compile(r"^paths:"),                          "paths"),
-    (re.compile(r"^green segments:"),                 "segments"),
-    (re.compile(r"^endpoint closures:"),              "closures"),
-    (re.compile(r"^endpoint extensions:"),            "closures"),
-    (re.compile(r"^parallel endpoint closures:"),     "closures"),
-    (re.compile(r"^T-junction extensions:"),          "closures"),
-    (re.compile(r"^pin crosslines:"),                 "closures"),
-    (re.compile(r"^route-end closures:"),             "closures"),
-    (re.compile(r"^route buffer frame:"),             "closures"),
-    (re.compile(r"^polygons:"),                       "polygonize"),
-    (re.compile(r"^polygons after area filter:"),     "polygonize"),
+    (re.compile(r"^paths:"),                          "analyze"),
+    (re.compile(r"^green segments:"),                 "analyze"),
+    (re.compile(r"^endpoint closures:"),              "analyze"),
+    (re.compile(r"^endpoint extensions"),             "analyze"),
+    (re.compile(r"^parallel endpoint closures:"),     "analyze"),
+    (re.compile(r"^T-junction extensions:"),          "analyze"),
+    (re.compile(r"^pin crosslines:"),                 "analyze"),
+    (re.compile(r"^route-end closures:"),             "analyze"),
+    (re.compile(r"^route buffer frame:"),             "analyze"),
+    (re.compile(r"^polygons:"),                       "analyze"),
+    (re.compile(r"^polygons after area filter:"),     "analyze"),
     (re.compile(r"^crossed green border segments:"),  "classify"),
     (re.compile(r"^road corridor polygon:"),          "classify"),
     (re.compile(r"^crossed polygons:"),               "classify"),
-    (re.compile(r"^OCR labels"),                      "match"),
-    (re.compile(r"^crossed=\d+ borderline=\d+"),      "match"),
+    (re.compile(r"^OCR labels"),                      "classify"),
+    (re.compile(r"^crossed=\d+ borderline=\d+"),      "classify"),
 ]
 
 
@@ -126,16 +126,32 @@ def _gc_jobs() -> None:
 # logging handler tłumaczący log analyze_hybrid → eventy SSE
 # ------------------------------------------------------------------------ #
 class JobProgressHandler(logging.Handler):
-    def __init__(self, job: Job):
+    """Mapuje log analyze_hybrid → eventy SSE.
+
+    Działa w trybie "milestone": gdy widzimy log linię przypisaną do kroku
+    PÓŹNIEJSZEGO niż obecny, zamykamy wszystkie wcześniejsze kroki i
+    aktywujemy nowy. Wewnątrz tego samego kroku tylko aktualizujemy detail
+    (drobne ruchy paska realizuje osobny tick w pipeline).
+    """
+
+    def __init__(self, job: Job, start_step: str = "analyze"):
         super().__init__(level=logging.INFO)
         self.job = job
-        self.completed_steps: set[str] = set()
+        self.current_idx = STEP_ORDER.index(start_step)
 
     def emit(self, record: logging.LogRecord) -> None:
         msg = record.getMessage()
         for pat, key in LOG_TO_STEP:
             if pat.match(msg):
-                push_step(self.job, key, detail=msg, complete=True)
+                idx = STEP_ORDER.index(key)
+                if idx > self.current_idx:
+                    # zamknij wszystkie wcześniejsze etapy do nowego włącznie
+                    for i in range(self.current_idx, idx):
+                        push_step(self.job, STEP_ORDER[i], complete=True)
+                    push_step(self.job, key, detail=msg)
+                    self.current_idx = idx
+                else:
+                    push_step(self.job, key, detail=msg)
                 return
 
 
@@ -146,15 +162,18 @@ def push_event(job: Job, kind: str, **payload) -> None:
     job.events.put({"type": kind, **payload})
 
 
-def push_step(job: Job, key: str, *, detail: str = "", complete: bool = False) -> None:
-    """Wyślij update postępu — oblicz % po wagach kroków."""
+def push_step(job: Job, key: str, *, detail: str = "",
+              complete: bool = False, emit_progress: bool = True) -> None:
+    """Wyślij update etapu i (opcjonalnie) postęp paska.
+
+    emit_progress=False używamy gdy START krokowi ma towarzyszyć ticker —
+    inaczej dostajemy szarpnięcie (push_step pcha 30% z 0.4-frakcji, potem
+    ticker zaczyna od 0% i pasek się cofa).
+    """
     label, weight = STEP_BY_KEY.get(key, (key, 0))
     push_event(job, "step", step=key, label=label, detail=detail, complete=complete)
-    # progres skumulowany — suma wag kroków zakończonych + bieżący
-    if complete:
-        push_event(job, "progress", percent=_compute_percent(job, key, complete=True))
-    else:
-        push_event(job, "progress", percent=_compute_percent(job, key, complete=False))
+    if emit_progress:
+        push_event(job, "progress", percent=_compute_percent(job, key, complete=complete))
 
 
 # ślad ukończonych kroków per-job (handler aktualizuje przez completed_steps,
@@ -180,32 +199,83 @@ def _compute_percent(job: Job, current_key: str, complete: bool) -> int:
 # ------------------------------------------------------------------------ #
 # pipeline w wątku
 # ------------------------------------------------------------------------ #
+def _start_smooth_ticker(job: Job, step_key: str, *, expected_seconds: float):
+    """Wątek-ticker który płynnie pcha pasek do PRZÓD przez czas trwania
+    blokującego kroku (np. OCR ~60-90s).
+
+    Krzywa: asymptotyczna (1 - exp(-t/tau)), gdzie tau dobrane tak, że po
+    `expected_seconds` jesteśmy na ~80% allocacji kroku. Cap 95% — ostatnie
+    5% domknie `complete=True` po realnym zakończeniu.
+    """
+    stop = threading.Event()
+
+    label, weight = STEP_BY_KEY[step_key]
+    # zakres % przeznaczony na ten krok
+    total = sum(w for _, _, w in PIPELINE_STEPS)
+    prior = sum(w for k, _, w in PIPELINE_STEPS if STEP_ORDER.index(k) < STEP_ORDER.index(step_key))
+    pct_start = prior / total * 100
+    pct_end = (prior + weight) / total * 100
+    pct_cap = pct_start + (pct_end - pct_start) * 0.95
+
+    tau = max(8.0, expected_seconds * 0.55)  # stała czasowa krzywej
+    t0 = time.time()
+
+    def loop():
+        while not stop.is_set():
+            elapsed = time.time() - t0
+            frac = 1.0 - math.exp(-elapsed / tau)
+            pct = pct_start + (pct_cap - pct_start) * frac
+            push_event(job, "progress", percent=int(round(pct)))
+            if stop.wait(1.5):
+                return
+
+    th = threading.Thread(target=loop, daemon=True)
+    th.start()
+    return stop, th
+
+
 def _run_pipeline(job: Job) -> None:
     try:
         push_step(job, "upload", complete=True)
 
-        # 1. OCR cache (build, niezależnie od analyze)
-        push_step(job, "ocr", detail="Inicjalizuję OCR…")
+        # 1. OCR — najdłuższy etap, ticker płynnie podnosi % w tle.
+        # Pierwszy strzał na świeżym workerze: ~120-150s (model load).
+        # Kolejne: ~30-60s. Dajemy 100s jako średnią — krzywa exp i tak nie
+        # dobije do 100% (cap 95% allocacji).
+        push_step(job, "ocr", detail="Czytam numery działek z mapy…",
+                  emit_progress=False)
         ocr_dir = Path(tempfile.gettempdir()) / "mapy_ocr_web"
         ocr_dir.mkdir(parents=True, exist_ok=True)
         ocr_cache = ocr_dir / f"{job.id}.pkl"
         t0 = time.time()
-        run_all_maps.build_ocr_cache(job.pdf_path, ocr_cache)
-        push_event(job, "ocr_done", seconds=round(time.time() - t0, 1))
-        push_step(job, "ocr", complete=True, detail=f"OCR zakończony ({time.time()-t0:.1f}s)")
+        ticker_stop, ticker_th = _start_smooth_ticker(
+            job, "ocr", expected_seconds=100.0)
+        try:
+            run_all_maps.build_ocr_cache(job.pdf_path, ocr_cache)
+        finally:
+            ticker_stop.set()
+            ticker_th.join(timeout=2)
+        ocr_secs = time.time() - t0
+        push_step(job, "ocr", complete=True,
+                  detail=f"Rozpoznano numery ({ocr_secs:.0f} s)")
 
-        # 2. analyze() z handlerem postępu
+        # 2. analyze() — handler mapuje log na "analyze" / "classify"
         log = logging.getLogger("analyze_hybrid")
         log.setLevel(logging.INFO)
-        handler = JobProgressHandler(job)
+        push_step(job, "analyze", detail="Wczytuję geometrię mapy…")
+        handler = JobProgressHandler(job, start_step="analyze")
         log.addHandler(handler)
         try:
             result = analyze_hybrid.analyze(str(job.pdf_path), ocr_cache=str(ocr_cache))
         finally:
             log.removeHandler(handler)
+        # po zakończeniu analyze: classify jest ostatnim aktywowanym etapem,
+        # zamykamy go (handler aktywuje go ale nie zamyka)
+        push_step(job, "classify", complete=True,
+                  detail=f"Znaleziono {len(result.crossed)} dz.")
 
         # 3. render PNG
-        push_step(job, "render", detail="Rysuję mapę z zaznaczeniami…")
+        push_step(job, "render", detail="Rysuję mapę…")
         png_path = job.pdf_path.parent / f"{job.id}.png"
         render_result_png(job.pdf_path, ocr_cache, set(result.crossed),
                           set(result.borderline), png_path)
