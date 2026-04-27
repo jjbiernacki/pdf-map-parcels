@@ -1,0 +1,30 @@
+webapp/app.py
+  f341c43f4879a57d 17,25,113-124,268-269,274-302
+run_all_maps.py
+  f341c43f4879a57d 54-56,91-102,196-201,205-217,223-226,228,233,235-257,261-262
+bench_ocr_variants.py
+  f341c43f4879a57d 1-152
+.gitignore
+  f341c43f4879a57d 30-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "7694a21bf26a2b8a3fdccc36660ffd6a0a946aea",
+  "prompts": {
+    "f341c43f4879a57d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2884b712-0b23-4281-b4e7-0d567e14f519",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "jjbiernacki",
+      "messages": [],
+      "total_additions": 267,
+      "total_deletions": 45,
+      "accepted_lines": 267,
+      "overriden_lines": 0,
+      "messages_url": "https://gitai.miquido.dev/cas/9d4e2c6653985dcf95ca3220f7f5fc6e1e778ae4a0e490f26d18cb84e4e339c9"
+    }
+  }
+}
