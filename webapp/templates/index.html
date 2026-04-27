@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Analiza mapy — działki przecięte trasą</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2214%22 font-size=%2214%22>🗺️</text></svg>">
+</head>
+<body>
+  <header>
+    <h1>Analiza mapy geodezyjnej</h1>
+    <p class="lead">Wgraj PDF z mapą — zwrócę listę numerów działek przeciętych przez czerwoną trasę.</p>
+  </header>
+
+  <main>
+    <!-- KROK 1: upload -->
+    <section id="upload-card" class="card">
+      <div id="dropzone" tabindex="0" aria-label="Upuść plik PDF tutaj">
+        <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p class="dz-title">Przeciągnij i upuść plik PDF</p>
+        <p class="dz-sub">albo <button type="button" id="pick-btn" class="link-btn">wybierz z dysku</button></p>
+        <p class="dz-hint">Maks. 25 MB · jeden plik PDF</p>
+        <input type="file" id="file" accept="application/pdf" hidden>
+      </div>
+    </section>
+
+    <!-- KROK 2: progres -->
+    <section id="progress-card" class="card hidden">
+      <div class="progress-head">
+        <div>
+          <p class="filename" id="filename"></p>
+          <p class="muted" id="elapsed">0 s</p>
+        </div>
+        <div class="percent" id="percent">0%</div>
+      </div>
+      <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+      <ol class="steps" id="steps"></ol>
+    </section>
+
+    <!-- KROK 3: wynik -->
+    <section id="result-card" class="card hidden">
+      <div class="result-head">
+        <h2>Wynik analizy</h2>
+        <button type="button" id="reset-btn" class="ghost-btn">Nowa analiza</button>
+      </div>
+
+      <div class="result-grid">
+        <div class="result-col">
+          <label class="field-label">
+            Działki przecięte (<span id="crossed-count">0</span>)
+            <button type="button" id="copy-btn" class="copy-btn" title="Kopiuj do schowka">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              Kopiuj
+            </button>
+          </label>
+          <textarea id="crossed-text" readonly spellcheck="false" rows="4"></textarea>
+          <p class="muted" id="copy-status"></p>
+
+          <div id="borderline-wrap" class="hidden">
+            <label class="field-label">Do weryfikacji ręcznej (<span id="borderline-count">0</span>)</label>
+            <textarea id="borderline-text" readonly spellcheck="false" rows="2"></textarea>
+          </div>
+        </div>
+
+        <div class="result-col">
+          <label class="field-label">Mapa z zaznaczonymi działkami</label>
+          <div id="map-wrap" class="map-wrap">
+            <div id="map-pending" class="map-pending">
+              <div class="spinner"></div>
+              <p>Renderuję mapę…</p>
+            </div>
+            <img id="map-img" alt="Mapa z zaznaczonymi działkami" class="hidden">
+          </div>
+          <p class="muted">
+            <span class="dot dot-pick"></span> wybrane &nbsp;
+            <span class="dot dot-bord"></span> sporne (do weryfikacji)
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- błąd -->
+    <section id="error-card" class="card error hidden">
+      <h2>Coś poszło nie tak</h2>
+      <p id="error-msg"></p>
+      <button type="button" id="error-reset" class="ghost-btn">Spróbuj ponownie</button>
+    </section>
+  </main>
+
+  <footer>
+    <p>Demo · <span id="repo-link">analyze_hybrid pipeline</span></p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+# --- venv / cache ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# --- macOS ---
+.DS_Store
+
+# --- IDE / local ---
+.claude/
+.idea/
+.vscode/
+
+# --- runtime artefacts ---
+/tmp/
+mapy_ocr/
+*.pkl
+
+# --- debug / exploration outputs ---
+rendered.png
+crop1.png
+crop1.png.pp.png
+crop2.png
+crop2.png.pp.png
+debug_*.png
+
+# --- webapp uploads / generated PNGs ---
+webapp/uploads/

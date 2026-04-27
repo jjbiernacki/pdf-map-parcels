@@ -1,0 +1,15 @@
+# Render.com — blueprint dla web service Pythonowego.
+# Po pushu do GitHuba, na render.com "New +" → "Blueprint", wskaż repo,
+# Render czyta ten plik i sam buduje.
+services:
+  - type: web
+    name: analiza-mapy
+    runtime: python
+    plan: free
+    buildCommand: pip install -r webapp/requirements.txt && python -c "import easyocr; easyocr.Reader(['en'], gpu=False, verbose=False)"
+    startCommand: gunicorn --chdir webapp app:app --workers 1 --threads 4 --timeout 600 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PYTHONUNBUFFERED
+        value: "1"

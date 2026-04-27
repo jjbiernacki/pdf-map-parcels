@@ -1,0 +1,10 @@
+pymupdf>=1.24
+numpy
+scipy
+Pillow
+shapely>=2.0
+easyocr
+opencv-python
+scikit-image
+pytest
+
