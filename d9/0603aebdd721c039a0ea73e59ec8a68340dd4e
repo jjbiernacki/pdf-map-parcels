@@ -1,0 +1,30 @@
+run_all_maps.py
+  f341c43f4879a57d 56-57,100-101,103-112,212-213,245-246,253-254,261-263
+webapp/static/script.js
+  f341c43f4879a57d 11-12,209-210,308
+webapp/app.py
+  f341c43f4879a57d 59-62,65-73,77,120-126,231-239,241-246,248-250,253,255,263,266,274-309,324,330-331,333-334,336-368,370-372,374-378,380-382
+webapp/templates/index.html
+  f341c43f4879a57d 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "d90603aebdd721c039a0ea73e59ec8a68340dd4e",
+  "prompts": {
+    "f341c43f4879a57d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2884b712-0b23-4281-b4e7-0d567e14f519",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "jjbiernacki",
+      "messages": [],
+      "total_additions": 158,
+      "total_deletions": 56,
+      "accepted_lines": 158,
+      "overriden_lines": 0,
+      "messages_url": "https://gitai.miquido.dev/cas/ecb4dc8ff4754b83762310d43d3f49fe9f4d5827ae52af15edfc4148f0736af9"
+    }
+  }
+}
