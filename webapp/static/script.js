@@ -76,6 +76,7 @@
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     activeJobId = null;
     fileInput.value = "";
+    stopBtn.classList.remove("hidden");
     uploadCard.classList.remove("hidden");
     progressCard.classList.add("hidden");
     resultCard.classList.add("hidden");
@@ -229,6 +230,7 @@
       li.classList.add("done");
     });
     stopTimer();
+    stopBtn.classList.add("hidden");
 
     resultCard.classList.remove("hidden");
     const crossed = ev.crossed || [];
